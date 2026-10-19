@@ -1,7 +1,7 @@
 # dsh-plugin-iot-thinking
 
 为 **DeepSeek Harness 0.2.x** 提供的 IoT thinking 块压缩插件，以**外部 bundle** 形式分发
-（可在 设置 → 添加插件 里填绝对路径安装，也可以用 `dsh plugin add`）。
+（可在 设置 → 添加插件 里填绝对路径安装，也可以用 `dsh plugin add`）。本项目由deepseek v4.1 flash 1017制作。
 
 > **Fork 说明。** 本仓库是
 > [`Roninton/IoT-items-of-thoughts`](https://github.com/Roninton/IoT-items-of-thoughts)
