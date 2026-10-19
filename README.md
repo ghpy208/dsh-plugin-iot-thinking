@@ -1,51 +1,44 @@
 # dsh-plugin-iot-thinking
 
-IoT thinking-block compression for **DeepSeek Harness 0.2.x**, packaged as an
-**external bundle** (installable from Settings → 添加插件 with an absolute local
-path, or with `dsh plugin add`).
+为 **DeepSeek Harness 0.2.x** 提供的 IoT thinking 块压缩插件，以**外部 bundle** 形式分发
+（可在 设置 → 添加插件 里填绝对路径安装，也可以用 `dsh plugin add`）。
 
-> **Fork notice.** This is a patched fork of
+> **Fork 说明。** 本仓库是
 > [`Roninton/IoT-items-of-thoughts`](https://github.com/Roninton/IoT-items-of-thoughts)
-> (`dsh-plugin-iot-thinking/`). Three fixes were needed to run it on the DSH
-> **desktop (Electron) build** with a **WorkBuddy-routed** model; upstream works
-> for the CLI/npm layout. See [Patches in this fork](#patches-in-this-fork).
+> 中 `dsh-plugin-iot-thinking/` 的修复版 fork。要在 DSH **桌面版（Electron）** 上、
+> 配合 **WorkBuddy 路由**的模型运行，需要三处修复；上游原版适用于 CLI / npm 布局。
+> 详见 [本 fork 的修复](#本-fork-的修复)。
 
-## The problem it fixes
+## 它解决的问题
 
-The previous `iot-compaction` backend used `ctx.compaction`. dsh's compaction
-replaces a **history range** and appends a checkpoint message. The model sees
-that checkpoint as a new user turn:
+上一代 `iot-compaction` 后端走的是 `ctx.compaction`。dsh 的 compaction 会替换**一段历史**，
+并追加一条 checkpoint 消息。模型把那条 checkpoint 当成新的用户回合：
 
 > 上下文已压缩 · 已压缩 10 条历史记录（约 5002 tokens）
 
-and then thinks:
+然后它开始想：
 
 > The conversation has been compacted. I need to figure out where we are…
 
-That is not IoT's rule. IoT says: **when a thinking block ends, compress that
-block and return the compact block in place.** The body, tool calls, usage and
-finish reason stay native.
+这不是 IoT 的规则。IoT 的规则是：**thinking 块结束的那一刻，压缩这一块，并把压缩结果原地返回。**
+正文、tool calls、usage 与 finish reason 保持原生行为。
 
-## How this plugin does it
+## 本插件的做法
 
-dsh exposes `llm/stream` as a **waterfall** around every model call. Adapters
-emit raw chunks; dsh assembles the committed assistant message from whatever the
-waterfall yields. This plugin:
+dsh 把 `llm/stream` 暴露为包住每次模型调用的 **waterfall**。适配器吐出原始 chunk，
+dsh 用 waterfall 吐出的内容组装最终提交的 assistant 消息。本插件：
 
-1. passes `block-start` through (the thinking block starts normally);
-2. holds `reasoning-delta` chunks per block index;
-3. at the reasoning block's `block-end`, calls the IoT compressor with the full
-   draft;
-4. yields **one compact `reasoning-delta`** and a **rewritten `block-end`**;
-5. passes text deltas, tool-call deltas, usage and finish through untouched.
+1. 放行 `block-start`（thinking 块正常开始）；
+2. 按块序号扣住 `reasoning-delta` chunk；
+3. 在 reasoning 块的 `block-end`，拿完整草稿调用 IoT 压缩器；
+4. 吐回**一个紧凑的 `reasoning-delta`** 和一个**改写过的 `block-end`**；
+5. 文本增量、工具调用增量、usage 与 finish 一律原样透传。
 
-Because the replacement happens **before** the assistant message is committed,
-there is no second message, no checkpoint, no `compaction/start`,
-`compaction/end`, or `compaction` service. It also works inside preset sessions,
-because the hook is at the LLM layer rather than a preset-local compaction realm.
+因为替换发生在 assistant 消息**提交之前**，所以没有第二条消息、没有 checkpoint、
+没有 `compaction/start` / `compaction/end`，也不注册 `compaction` 服务。它也照样在
+preset 会话里生效，因为钩子挂在 LLM 层，而不是 preset 内部的 compaction realm。
 
-If compression fails, is disabled, or the result is empty / not shorter than the
-draft, the original deltas and block are yielded unchanged.
+如果压缩失败、被关闭，或者结果为空 / 不比原草稿短，原始增量与块原样放行。
 
 ## 节点格式
 
@@ -94,41 +87,42 @@ thinking-degenerate { stage: "input" | "output", action: "retry" | "fallback" | 
 原草稿仍在 `originals/`。实测：一段曾经产出 9 条 `[中性]` 单词节点的 622 字草稿，
 现在稳定输出 5 条有效节点（322 字），无需重试；普通 web 会话 1161 字 → 153 字 / 3 条节点。
 
-## Install
+## 安装
 
-### From the UI
+### 从界面安装
 
-Settings → Plugins → **添加插件** → enter the absolute path:
+设置 → 插件 → **添加插件** → 填入插件的绝对路径，例如：
 
 ```text
-D:\_playground\workspace\IoT-items-of-thoughts\dsh-plugin-iot-thinking
+C:\Users\<你>\.dsh\local-plugins\dsh-plugin-iot-thinking
 ```
 
-The package declares `dsh.bundle.patch`, so the plugin manager adds it to the
-profile's `dsh.profile.bundles` and its `cordis.patch.yml` row loads
-automatically.
+包内声明了 `dsh.bundle.patch`，所以插件管理器会把它加进 profile 的 `dsh.profile.bundles`，
+它的 `cordis.patch.yml` 那一行会自动加载。
 
-### From the CLI
+### 从命令行安装
 
 ```powershell
-dsh plugin --profile web add "D:\_playground\workspace\IoT-items-of-thoughts\dsh-plugin-iot-thinking"
+dsh plugin --profile desktop add "C:\Users\<你>\.dsh\local-plugins\dsh-plugin-iot-thinking"
 ```
 
-Restart `dsh web` once after installing (the host module is new). The client
-half is served from `exports["./client"]`.
+> 注意：`--profile` 要填你实际在用的 profile 名。本机 GUI 跑的是 `desktop`；
+> 若你没有该 profile，`dsh plugin` 会先初始化一个。
 
-## Switch and limits
+装完**重启一次** dsh（host 侧是新模块）。client 半个从 `exports["./client"]` 出。
 
-Settings → Plugins → **IoT 思考压缩**:
+## 开关与参数
 
-- **已启用 / 已关闭** — the live switch;
-- **最小压缩字符数** — drafts shorter than this are left alone (default 400);
-- **最大输入字符数** — drafts longer than this are left alone (default 24000);
-- **节点输出上限** — compressor `maxTokens` (default 2000);
-- **最多节点数** — hard cap on the node chain (default 8);
-- **最多 [中性] 节点** — extra `[中性]` nodes are merged (default 2; `0` drops them);
-- optional **provider / model** — leave blank to follow the current request's
-  route, or set another provider/model registered in DSH.
+设置 → 插件 → **IoT 思考压缩**：
+
+- **已启用 / 已关闭** — 实时开关；
+- **最小压缩字符数** — 短于此值的草稿不处理（默认 400）；
+- **最大输入字符数** — 长于此值的草稿不处理（默认 24000）；
+- **节点输出上限** — 压缩器的 `maxTokens`（默认 2000）；
+- **最多节点数** — 节点链硬上限（默认 8）；
+- **最多 [中性] 节点** — 多余的 `[中性]` 会被合并（默认 2；填 `0` 则全部删除）；
+- 可选 **provider / model** — 留空表示跟随当前请求的路由，也可以指定 DSH 里注册的
+  其他 provider/model。
 
 ### 压缩档位（3 / 5 / 8 标签）
 
@@ -146,132 +140,120 @@ Settings → Plugins → **IoT 思考压缩**:
 或 `full`；要极限省 token 才用 `compact`。`thinking-compressed` 事件会记录 `profile`，
 便于按档位统计 `charsIn/charsOut`。
 
-The switch writes:
+开关写入：
 
 ```text
 $DSH_HOME/plugin-data/iot-thinking/config.json
 ```
 
-and the stream hook reads it on every request (mtime cache), so toggling takes
-effect on the **next model request** — no restart.
+流钩子每次请求都会按 mtime 读这个文件，所以开关在**下一个模型请求**就生效，不用重启。
 
-## Evidence
+## 怎么验证它真的生效了
 
-The only reliable proof that a draft was intercepted is the plugin ledger:
+**只有插件账本是可靠证据**（会话日志里看见的紧凑块，分不清是插件压的还是模型自己写短的）：
 
 ```text
 $DSH_HOME/plugin-data/iot-thinking/events.jsonl
 ```
 
-Events: `constructed`, `block-replaced`, `block-kept`, `block-skipped`,
-`block-failed`, `thinking-compressed`, `thinking-failed`, `thinking-degenerate`.
+事件：`constructed`、`block-replaced`、`block-kept`、`block-skipped`、`block-failed`、
+`thinking-compressed`、`thinking-failed`、`thinking-degenerate`。
 
-Original drafts are archived before replacement:
+替换前的原文会在替换前归档：
 
 ```text
 $DSH_HOME/plugin-data/iot-thinking/originals/<sessionId>/<time>-block<index>.txt
 ```
 
-dsh stores whatever chunks the waterfall yields, so once a block is replaced the
-original draft exists only in this archive.
+dsh 存的是 waterfall 吐出来的那些 chunk，所以块一旦被替换，原文在会话里就没了，
+只存在于这个归档目录。
 
-## Files
+## 文件表
 
-| File | Role |
+| 文件 | 作用 |
 |---|---|
-| `index.mjs` | host plugin: `llm/stream` hook + config API |
-| `lib/stream.mjs` | pure chunk transformer (hold → compress → single delta + block-end) |
-| `lib/compress.mjs` | auxiliary `ctx.llm.stream()` call(s), low-temperature retry, quality gate, deterministic fallback |
-| `lib/think.mjs` | IoT instruction, prompt wrapper, draft sanitization, degeneration detection, output cleanup |
-| `lib/config-store.mjs` | live JSON config (row defaults + user file) |
-| `lib/config-api.mjs` | exact HTTP routes for the Settings card |
-| `lib/ledger.mjs` | events ledger + original-draft archive |
-| `lib/client.js` | Settings → Plugins → IoT 思考压缩 card |
-| `selftest.mjs` | pure transformer tests (no dsh boot, no model) |
+| `index.mjs` | host 插件：`llm/stream` 钩子 + 配置 API |
+| `lib/stream.mjs` | 纯 chunk 转换器（扣住 → 压缩 → 单个 delta + block-end） |
+| `lib/compress.mjs` | 辅助 `ctx.llm.stream()` 调用、低温度重试、质量门、确定性兜底 |
+| `lib/think.mjs` | IoT 指令、提示词包装、草稿净化、退化检测、输出清理 |
+| `lib/config-store.mjs` | 实时 JSON 配置（行内默认值 + 用户文件） |
+| `lib/config-api.mjs` | 设置卡片用的精确 HTTP 路由 |
+| `lib/ledger.mjs` | 事件账本 + 原文归档 |
+| `lib/client.js` | 设置 → 插件 → IoT 思考压缩 卡片 |
+| `selftest.mjs` | 纯转换器测试（不启动 dsh、不连模型） |
 
-## Self-test
+## 自测
 
 ```powershell
-cd D:\_playground\workspace\IoT-items-of-thoughts\dsh-plugin-iot-thinking
 node selftest.mjs
 ```
 
-Covers: replacement of a completed block, disabled pass-through, non-agent-loop
-pass-through, `minChars`, compressor failure, empty/longer output fallback,
-multiple blocks, aborted streams, block-end without deltas, output cleanup,
-degenerate input/output detection, strict retry, and deterministic fallback.
+覆盖：完成块被替换、关闭时透传、非 agent-loop 请求透传、`minChars`、压缩器失败、
+空/更长输出兜底、多块、流中断、只有 block-end 没有增量、输出清理、退化输入/输出检测、
+严格重试、确定性兜底。
 
-## Known limits
+## 已知边界
 
-1. **Latency at block end.** The reasoning block is shown as "thinking" while
-   the draft is buffered, then the compact text appears. Streaming the compact
-   text while compressing is deliberately out of scope ("压缩后返回").
-2. **Extra model call per compressed block.** The compressor uses the current
-   route by default; set a cheaper provider/model in the card if needed.
-3. **Not a security boundary.** The plugin runs with the host's permissions and
-   can read model output; install only from a source you trust.
-4. **The original draft is not in the session log.** It is archived under
-   `plugin-data/iot-thinking/originals/`; keep that directory if you need audit.
-5. **Degenerate retry costs one more compressor call.** Only when the quality
-   gate rejects the first output; the deterministic fallback itself is local.
-6. **The fallback is lossy.** If both attempts are degenerate, it keeps at most
-   one fact line plus a plan line; the full draft remains in `originals/`.
+1. **块结束时的延迟。** 草稿缓冲期间 thinking 块显示为“思考中”，随后紧凑文本才出现。
+   “边压边回”是明确排除的次要功能（压缩后返回）。
+2. **每压一块多一次模型调用。** 压缩器默认走当前路由；需要的话可以在卡片里指定更便宜的
+   provider/model。
+3. **不是安全边界。** 插件以 host 权限运行，能读模型输出；只装可信来源。
+4. **原文不在会话日志里。** 它归档在 `plugin-data/iot-thinking/originals/`；需要审计就保留
+   这个目录。
+5. **退化重试多花一次压缩调用。** 只在质量门拒绝第一次输出时发生；确定性兜底本身是本地计算。
+6. **兜底是有损的。** 两次尝试都退化时，最多保留一条事实行加一条计划行；完整草稿仍在
+   `originals/` 里。
 
-## Patches in this fork
+## 本 fork 的修复
 
-All three were found by running the plugin on the **DSH desktop (Electron)
-build** against a **WorkBuddy-routed** model. Each one made the plugin fail
-silently-but-safely: the original thinking block was passed through untouched,
-so the plugin looked installed while compressing nothing.
+三处问题都是在 **DSH 桌面版（Electron）** 上配合 **WorkBuddy 路由**的模型跑出来的。
+每一处都是“静默但安全地失败”：原始 thinking 块原样放行，所以插件看起来装好了，
+实际一个块都没压。
 
-### 1. `lib/seams.mjs` — resolve host packages from the desktop install
+### 1. `lib/seams.mjs` — 从桌面版安装目录解析宿主包
 
-The desktop build ships the host `@deepseek-ai/*` packages **inside
-`resources/app.asar`**, not in `$DSH_HOME/profiles/node_modules` or a global npm
-root. `defaultNodeModulesRoots()` only knew those two layouts, so
-`importSeam("@deepseek-ai/dsh-llm")` threw `ERR_MODULE_NOT_FOUND` at load time.
+桌面版把宿主的 `@deepseek-ai/*` 包**打在 `resources/app.asar` 里面**，既不在
+`$DSH_HOME/profiles/node_modules`，也不在全局 npm 根目录。原来的
+`defaultNodeModulesRoots()` 只知道后两种布局，于是
+`importSeam("@deepseek-ai/dsh-llm")` 在加载期就抛 `ERR_MODULE_NOT_FOUND`。
 
-Now it also derives anchors from `process.execPath` and
-`process.resourcesPath` (`<install>/resources/app.asar/dsh/node_modules`, the
-`.unpacked` sibling, and the macOS `Contents/Resources` spelling). Electron's
-`fs`/`import` can read asar paths directly, so no extraction is needed.
+现在还会从 `process.execPath` 和 `process.resourcesPath` 推导锚点
+（`<install>/resources/app.asar/dsh/node_modules`、同级的 `.unpacked` 目录，
+以及 macOS 的 `Contents/Resources` 写法）。Electron 的 `fs`/`import` 能直接读 asar 路径，
+不需要解包。
 
-### 2. `lib/compress.mjs` — negotiate `reasoningEffort` instead of hardcoding `"off"`
+### 2. `lib/compress.mjs` — 协商 `reasoningEffort`，而不是硬编码 `"off"`
 
-dsh validates `reasoningEffort` against the adapter's advertised metadata and
-**rejects** rather than clamping. The compressor hardcoded `"off"` to keep the
-compressor from spending its output budget on thinking — which fails outright on
-a model that advertises no `off` rung:
+dsh 会拿 `reasoningEffort` 去校验适配器声明的元数据，不支持就**直接拒绝**，不做裁剪。
+压缩器原本硬编码 `"off"`，为的是不让压缩器把输出预算花在自己的思考上——但这在一个
+没有 `off` 档的模型上会直接失败：
 
 ```
 provider "workbuddy" model "deepseek-v4.1-flash" does not support reasoning effort "off"
 ```
 
-`pickReasoningEffort()` now asks `ctx.llm.resolveModelInfo(provider, model)` what
-this exact model accepts and picks `off` → `none` → `minimal` → cheapest
-advertised rung, sending **no** `reasoningEffort` at all when the probe fails or
-the model advertises no reasoning metadata.
+`pickReasoningEffort()` 现在先问 `ctx.llm.resolveModelInfo(provider, model)`
+这个具体模型接受哪些档位，按 `off` → `none` → `minimal` → 最低可用档 依次选择；
+探测失败、或模型压根没有声明 reasoning 元数据时，**完全不传** `reasoningEffort`。
 
-### 3. `lib/compress.mjs` — send a leading system message
+### 3. `lib/compress.mjs` — 补一条开头的 system 消息
 
-Some gateways require the transcript to open with a system row. WorkBuddy
-returns `400` + code `11128` ("first message is not system prompt", dressed up as
-a safety-policy block) for a request whose first message is a user turn. The
-compressor is a single-user-turn call, so every compression was rejected:
+有些网关要求 transcript 以 system 行开头。WorkBuddy 对首条消息是用户回合的请求返回
+`400` + code `11128`（“first message is not system prompt”，伪装成安全策略拦截）。
+压缩器是单用户回合调用，所以每次压缩都被拒：
 
 ```
 workbuddy: 请求被拦截，请重新发送 first message is not system prompt
 ```
 
-The call now prepends `Llm.createSystemMessage(COMPRESSOR_SYSTEM)`. The system
-text carries no task instruction — the user message does — it exists only to
-satisfy the gateway. The compressor is still not an agent-loop request, so the
-`llm/stream` waterfall ignores it and there is no recursion.
+现在调用前会插入 `Llm.createSystemMessage(COMPRESSOR_SYSTEM)`。system 文本本身不带
+任务指令（指令在用户消息里），它只是用来满足网关。压缩调用依然不是 agent-loop 请求，
+所以 `llm/stream` waterfall 会忽略它，不会递归。
 
-## Verified working
+## 实测生效
 
-On the desktop build with `provider: workbuddy`, `model: deepseek-v4.1-flash`,
-`profile: full`:
+在桌面版上，`provider: workbuddy`、`model: deepseek-v4.1-flash`、`profile: full`：
 
 ```
 thinking-compressed  charsIn 1354 → charsOut 575   ms 4402  finish "stop"  retried false
@@ -281,6 +263,6 @@ thinking-compressed  charsIn 4449 → charsOut 566   ms 6052  finish "stop"  ret
 block-replaced       charsIn 4449 → charsOut 566
 ```
 
-Both are single-pass (no `retried`, no `fallback`), and the committed
-`assistant/message` events in the session log contain the compacted node chain
-rather than the original draft. `selftest.mjs` passes 30/30 after the patches.
+两次都是单次成功（没有 `retried`，没有 `fallback`），且会话日志里已提交的
+`assistant/message` 事件包含的是压缩后的节点链，而不是原始草稿。
+打完补丁后 `selftest.mjs` 30/30 通过。
